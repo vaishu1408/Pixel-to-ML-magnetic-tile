@@ -17,16 +17,20 @@ The model learns this relationship and predicts a binary mask for new images, he
 The dataset is organized by defect category:
 
 data/raw/images/
+
 MT_Blowhole/
+
 MT_Crack/
+
 MT_Fray/
+
 MT_Uneven/
 
 
 Inside each folder:
 
-- **.jpg** → grayscale tile surface  
-- **.png** → binary defect mask  
+- **.jpg** - grayscale tile surface  
+- **.png** - binary defect mask  
 
 ### Pipeline Steps
 
