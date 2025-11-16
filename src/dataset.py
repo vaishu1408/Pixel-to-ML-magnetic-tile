@@ -2,58 +2,60 @@ import os
 from PIL import Image
 import torch
 from torch.utils.data import Dataset
-import torchvision.transforms as T
+from torchvision import transforms
 
 class TileSegmentationDataset(Dataset):
-    def __init__(self, image_root, transform=None):
+    def __init__(self, image_root):
         """
-        image_root: path containing subfolders Blowhole, Crack, Fray, etc.
-        Each folder must contain:
-            - *.jpg (image)
-            - *.png (mask)
+        image_root: path to data/raw/images
+                    Contains defect folders, each with .jpg and .png mixed
         """
+
         self.image_files = []
         self.mask_files = []
-        self.transform = transform
 
-        defect_types = os.listdir(image_root)
-
-        for defect in defect_types:
-            defect_folder = os.path.join(image_root, defect, "Imgs")
-            if not os.path.isdir(defect_folder):
+        # loop through defect classes
+        for defect in os.listdir(image_root):
+            defect_path = os.path.join(image_root, defect, "Imgs")
+            if not os.path.isdir(defect_path):
                 continue
 
-            for f in os.listdir(defect_folder):
-                if f.endswith(".jpg") or f.endswith(".jpeg"):
-                    img_path = os.path.join(defect_folder, f)
-                    mask_path = img_path.replace(".jpg", ".png").replace(".jpeg", ".png")
+            # for each jpg, find matching png
+            for f in os.listdir(defect_path):
+                if not f.lower().endswith(".jpg"):
+                    continue
 
-                    if os.path.exists(mask_path):
-                        self.image_files.append(img_path)
-                        self.mask_files.append(mask_path)
+                base = f[:-4]  # remove ".jpg"
+                image_path = os.path.join(defect_path, f)
+                mask_path = os.path.join(defect_path, base + ".png")
 
-        print(f"Loaded {len(self.image_files)} samples from dataset.")
+                if os.path.exists(mask_path):
+                    self.image_files.append(image_path)
+                    self.mask_files.append(mask_path)
 
-        # Default transforms
-        self.default_transform = T.Compose([
-            T.Resize((256, 256)),
-            T.ToTensor(),
+        print(f"Loaded {len(self.image_files)} correctly paired samples.")
+
+        self.transform_img = transforms.Compose([
+            transforms.Grayscale(1),
+            transforms.Resize((256, 256)),
+            transforms.ToTensor()
+        ])
+
+        self.transform_mask = transforms.Compose([
+            transforms.Grayscale(1),
+            transforms.Resize((256, 256)),
+            transforms.ToTensor()
         ])
 
     def __len__(self):
         return len(self.image_files)
 
     def __getitem__(self, idx):
-        img_path = self.image_files[idx]
-        mask_path = self.mask_files[idx]
+        img = Image.open(self.image_files[idx])
+        mask = Image.open(self.mask_files[idx])
 
-        img = Image.open(img_path).convert("L")     # grayscale
-        mask = Image.open(mask_path).convert("L")   # grayscale mask (0/255)
-
-        img = self.default_transform(img)
-        mask = self.default_transform(mask)
-
-        # Convert mask to {0,1}
+        img = self.transform_img(img)
+        mask = self.transform_mask(mask)
         mask = (mask > 0.5).float()
 
         return img, mask
