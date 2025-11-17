@@ -59,7 +59,7 @@ For each tested image, the model generates:
 - **Raw Input** – grayscale tile  
 - **Predicted Mask** – binary defect region  
 - **Overlay Output** – mask highlighted in red  
-- **Side-by-Side View** – comparison of input, mask, and overlay  
+
 
 All samples are available in:
 
