@@ -1,101 +1,132 @@
-import sys
-import os
-
-# Add project root so imports work
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 import argparse
+import os
 import cv2
-import torch
 import numpy as np
+import torch
+from torchvision import transforms
+
+# allow Python to import from src/
+import sys
+sys.path.append(".")
 
 from src.unet import UNet
 
-DEVICE = "cpu"
-MODEL_PATH = "models/unet_magnetic_tile.pth"
-IMG_SIZE = 256
 
+# ---------load trained model---------------
 
-def load_image(path):
-    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        raise ValueError(f"❌ Cannot read image: {path}")
+def load_model(model_path, device):
+    # build UNet architecture
+    model = UNet(in_channels=1, out_channels=1)
 
-    # Resize to model size
-    img_resized = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+    # load saved weights
+    model.load_state_dict(torch.load(model_path, map_location=device))
 
-    # Convert to tensor (1,1,H,W)
-    tensor = torch.from_numpy(img_resized).float().unsqueeze(0).unsqueeze(0) / 255.0
+    # move model to device
+    model.to(device)
 
-    return img_resized, tensor
-
-
-def overlay_mask(image, mask):
-    """Create red overlay on detected defect."""
-    image_color = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-    red_mask = np.zeros_like(image_color)
-    red_mask[:, :, 2] = mask  # red channel only
-    return cv2.addWeighted(image_color, 0.7, red_mask, 0.3, 0)
-
-
-def main():
-    print("\n>>> predict_clean.py started")
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--image", required=True, help="Path to input image")
-    args = parser.parse_args()
-
-    # Prepare output folder
-    out_dir = "inference/output"
-    os.makedirs(out_dir, exist_ok=True)
-
-    img_name = os.path.basename(args.image)
-    img_base = os.path.splitext(img_name)[0]
-
-    print(f">>> Running inference on: {img_name}")
-
-    # Load model
-    model = UNet().to(DEVICE)
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    # disable training-specific layers
     model.eval()
+    return model
 
-    # Load image
-    raw_img, tensor = load_image(args.image)
 
-    # Predict
+# --------------read & prepare image---------------------
+
+def preprocess_image(img_path):
+    # read as grayscale
+    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+
+    # resize to model input
+    img_resized = cv2.resize(img, (256, 256))
+
+    # convert numpy → tensor
+    transform = transforms.Compose([
+        transforms.ToTensor()  # scale to 0–1 and add channel dim
+    ])
+
+    # add batch dimension
+    tensor_img = transform(img_resized).unsqueeze(0)
+    return img, img_resized, tensor_img
+
+
+
+# --------------run model forward pass-------------------------
+
+def predict_mask(model, tensor_img, device):
+    # disable gradient tracking
     with torch.no_grad():
-        pred = model(tensor.to(DEVICE))
-        pred = torch.sigmoid(pred).cpu().numpy()[0, 0]
+        # model output (logits)
+        pred = model(tensor_img.to(device))
 
-    # Convert to binary mask
-    bin_mask = (pred > 0.5).astype(np.uint8) * 255
+        # apply sigmoid to convert logits → probability map
+        mask = torch.sigmoid(pred).cpu().numpy()[0, 0]
 
-    # Create overlay
-    overlay_img = overlay_mask(raw_img, bin_mask)
+    return mask
 
-    # Convert raw + mask to 3 channels for stacking
-    raw_img_color = cv2.cvtColor(raw_img, cv2.COLOR_GRAY2BGR)
-    bin_mask_color = cv2.cvtColor(bin_mask, cv2.COLOR_GRAY2BGR)
 
-    # Build side-by-side image
-    side = np.hstack([raw_img_color, bin_mask_color, overlay_img])
+# ------------------convert prob map to binary mask-------------------
 
-    # Output paths
-    mask_path = f"{out_dir}/mask_{img_base}.png"
-    overlay_path = f"{out_dir}/overlay_{img_base}.png"
-    side_by_side_path = f"{out_dir}/side_by_side_{img_base}.png"
+def postprocess_mask(mask):
+    # threshold at 0.5
+    bin_mask = (mask > 0.5).astype(np.uint8) * 255
+    return bin_mask
 
-    # Save results
+
+# ------------------build overlay image----------------------------
+
+def create_overlay(raw_resized, bin_mask):
+    # convert grayscale to RGB
+    raw_rgb = cv2.cvtColor(raw_resized, cv2.COLOR_GRAY2RGB)
+
+    # create red defect layer
+    red_mask = np.zeros_like(raw_rgb)
+    red_mask[:, :, 2] = bin_mask
+
+    # blend raw and red mask
+    overlay = cv2.addWeighted(raw_rgb, 0.6, red_mask, 0.4, 0)
+
+    return overlay
+
+
+# ------------------save outputs--------------------------------
+
+def save_outputs(filename, raw_resized, bin_mask, overlay, save_dir):
+
+    # ensure directory exists
+    os.makedirs(save_dir, exist_ok=True)
+
+    # remove file extension
+    base = os.path.splitext(os.path.basename(filename))[0]
+
+    # define paths
+    mask_path = f"{save_dir}/mask_{base}.png"
+    overlay_path = f"{save_dir}/overlay_{base}.png"
+    side_path = f"{save_dir}/side_by_side_{base}.png"
+
+    # save binary mask
     cv2.imwrite(mask_path, bin_mask)
-    cv2.imwrite(overlay_path, overlay_img)
-    cv2.imwrite(side_by_side_path, side)
+
+    # save overlay image
+    cv2.imwrite(overlay_path, overlay)
+
+    # convert everything to RGB for stacking
+    raw_3c = cv2.cvtColor(raw_resized, cv2.COLOR_GRAY2RGB)
+    mask_3c = cv2.cvtColor(bin_mask, cv2.COLOR_GRAY2RGB)
+
+    # stack raw | mask | overlay horizontally
+    side = np.hstack([raw_3c, mask_3c, overlay])
+    cv2.imwrite(side_path, side)
 
     print("\n>>> Saved outputs:")
     print(mask_path)
     print(overlay_path)
-    print(side_by_side_path)
+    print(side_path)
     print("\n>>> Done!\n")
 
 
-if __name__ == "__main__":
-    main()
+# ----------------------main execution----------------------
+
+def main():
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--image", type=str, required=True, help="Path to input image")
+    args = p

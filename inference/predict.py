@@ -3,6 +3,14 @@ import torch.nn as nn
 from PIL import Image
 import numpy as np
 import cv2
+import sys
+import os
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+# Add it to Python path
+sys.path.append(project_root)
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+#sys.path.append("/Users/varshinivaisnavisrinivasan/Downloads/Magnetic Tile/Pixel-to-ML-magnetic-tile")
 from src.unet import UNet
 
 MODEL_PATH = "models/unet_magnetic_tile.pth"
